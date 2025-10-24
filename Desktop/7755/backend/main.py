@@ -195,6 +195,12 @@ async def create_character_v2(user_profile: UserProfile, db: Session = Depends(g
         # Save character to database
         character = conv_manager.save_character(user.user_id, character_settings)
 
+        # Store appearance description if provided
+        if user_profile.appearance_description:
+            character.appearance_description = user_profile.appearance_description
+            db.commit()
+            db.refresh(character)
+
         # Generate initial message
         initial_message = character_generator.create_initial_message(
             character_settings["name"],
@@ -225,11 +231,98 @@ async def create_character_v2(user_profile: UserProfile, db: Session = Depends(g
             },
             "initial_message": initial_message,
             "favorability_level": 1,
-            "message": "角色已創建並保存！"
+            "message": "角色已創建並保存！",
+            "has_appearance": bool(user_profile.appearance_description)
         }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"角色創建失敗: {str(e)}")
+
+
+@app.post("/api/v2/generate-character-image/{character_id}")
+async def generate_character_image_endpoint(
+    character_id: int,
+    db: Session = Depends(get_db)
+) -> Dict:
+    """
+    Generate first character image (face portrait)
+
+    Args:
+        character_id: Character ID
+        db: Database session
+
+    Returns:
+        Image URL and seed
+    """
+    try:
+        from backend.image_generator import ImageGenerator
+        from backend.database import GeneratedImage
+
+        # Get character
+        character = db.query(Character).filter(
+            Character.character_id == character_id
+        ).first()
+
+        if not character:
+            raise HTTPException(status_code=404, detail="角色不存在")
+
+        if not character.appearance_description:
+            raise HTTPException(status_code=400, detail="角色沒有外貌描述，無法生成圖片")
+
+        # Initialize image generator
+        img_gen = ImageGenerator()
+
+        # Get available models
+        models_response = img_gen.get_models(size=1, mtp="Checkpoint")
+        if "error" in models_response or not models_response.get("data"):
+            raise HTTPException(status_code=500, detail="無法獲取圖片生成模型")
+
+        model_id = models_response["data"][0]["id"]
+
+        # Generate character face
+        result = img_gen.generate_character_face(
+            appearance_description=character.appearance_description,
+            character_name=character.name,
+            model_id=model_id,
+            seed=0  # Random seed for first generation
+        )
+
+        if not result:
+            raise HTTPException(status_code=500, detail="圖片生成失敗")
+
+        # Save to character
+        character.base_image_url = result["url"]
+        character.image_seed = result["seed"]
+        character.image_model_id = model_id
+
+        # Save to generated images table
+        generated_img = GeneratedImage(
+            character_id=character_id,
+            image_url=result["url"],
+            image_type="first_message",
+            trigger_count=0,
+            activity_description=f"Character portrait: {character.name}"
+        )
+        db.add(generated_img)
+
+        db.commit()
+        db.refresh(character)
+
+        return {
+            "success": True,
+            "image_url": result["url"],
+            "seed": result["seed"],
+            "model_id": model_id,
+            "message": "角色圖片生成成功！"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error generating image: {error_details}")
+        raise HTTPException(status_code=500, detail=f"圖片生成失敗: {str(e)}")
 
 
 class SendMessageRequest(BaseModel):
@@ -1374,6 +1467,12 @@ async def ui2():
                     <input type="text" id="occupation" placeholder="例如：學生、上班族">
                 </div>
 
+                <div class="form-group">
+                    <label>外貌特徵（用於生成角色圖片）：</label>
+                    <textarea id="appearance" placeholder="例如：長黑髮、大眼睛、白皙皮膚、甜美笑容、穿著休閒服飾..." rows="3"></textarea>
+                    <small style="color: #666;">💡 描述角色的髮色、髮型、眼睛、膚色、身高、穿著風格等外貌特徵，用於生成2D動漫風格的角色圖片</small>
+                </div>
+
                 <div class="button-group">
                     <button onclick="prevStep(1)">上一步</button>
                     <button onclick="nextStep(3)">下一步</button>
@@ -1569,6 +1668,7 @@ async def ui2():
                 const interests = document.getElementById('interests').value.split('、').map(s => s.trim()).filter(s => s);
                 const ageRange = document.getElementById('ageRange').value;
                 const occupation = document.getElementById('occupation').value;
+                const appearance = document.getElementById('appearance').value;
                 const likes = document.getElementById('likes').value;
                 const dislikes = document.getElementById('dislikes').value;
                 const habits = document.getElementById('habits').value;
@@ -1584,9 +1684,10 @@ async def ui2():
                     user_gender: userGender,
                     user_preference: userPreference,
                     preferred_character_name: characterName,
+                    appearance_description: appearance,
                     dream_type: {
                         personality_traits: traits,
-                        physical_description: '',
+                        physical_description: appearance,
                         age_range: ageRange,
                         interests: interests,
                         occupation: occupation,

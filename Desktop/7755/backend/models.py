@@ -50,6 +50,7 @@ class UserProfile(BaseModel):
     user_gender: str = Field(..., description="用戶性別")
     user_preference: str = Field(..., description="用戶喜歡的性別")
     preferred_character_name: Optional[str] = Field(None, description="用戶指定的角色名字")
+    appearance_description: Optional[str] = Field(None, description="角色外貌描述（用於圖片生成）")
     dream_type: DreamType
     custom_memory: CustomMemory
 
