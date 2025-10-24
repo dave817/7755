@@ -60,6 +60,13 @@ class Character(Base):
     detail_setting = Column(Text)  # Up to 500 chars
     other_setting = Column(JSON)  # JSON stored as text
     knowledge_base_id = Column(String(100))  # SenseChat knowledge base ID
+
+    # Image generation fields
+    appearance_description = Column(Text)  # Physical appearance for image generation
+    base_image_url = Column(String(500))  # URL of base character face image
+    image_seed = Column(Integer)  # Seed for consistent character generation
+    image_model_id = Column(String(100))  # Miaohua model ID used
+
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # Relationships
@@ -71,6 +78,7 @@ class Character(Base):
         uselist=False,
         cascade="all, delete-orphan"
     )
+    generated_images = relationship("GeneratedImage", back_populates="character", cascade="all, delete-orphan")
 
 
 class Message(Base):
@@ -117,6 +125,22 @@ class FavorabilityTracking(Base):
 
     # Relationships
     character = relationship("Character", back_populates="favorability")
+
+
+class GeneratedImage(Base):
+    """Generated images for characters at different milestones"""
+    __tablename__ = "generated_images"
+
+    image_id = Column(Integer, primary_key=True, index=True)
+    character_id = Column(Integer, ForeignKey("characters.character_id"), nullable=False)
+    image_url = Column(String(500), nullable=False)
+    image_type = Column(String(50), nullable=False)  # 'first_message', 'milestone', 'message_50'
+    trigger_count = Column(Integer)  # Message count or milestone when generated
+    activity_description = Column(Text)  # Activity/scene description
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Relationships
+    character = relationship("Character", back_populates="generated_images")
 
 
 # Create all tables
